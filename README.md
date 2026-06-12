@@ -78,3 +78,9 @@ With a rooted Android and **2 phone numbers**, the SMS Gateway enables:
 | IPRoyal | Residential Rotating | ~$3/GB | Budget-friendly |
 
 Built with `instagrapi` — Android Instagram Private API emulation with device fingerprinting, request signing, session persistence, root SMS interception, and email verification.
+
+---
+
+## Educational Context
+
+This project was developed as part of a university coursework assignment in **Network Security & Penetration Testing**. The objective was to build a modular, API-driven automation framework that demonstrates how modern social engineering campaigns and automated bot registration pipelines operate — from disposable email generation and multi-factor authentication bypass (SMS interception) to command-and-control infrastructure. All code was written and tested exclusively in a sandboxed lab environment using isolated devices with explicit authorization. No real Instagram accounts, user data, or production systems were targeted. The project reinforced core concepts in API reverse engineering, thread-safe concurrent programming, SQLite-backed task orchestration, and mobile device fingerprinting. It also provided hands-on experience with Android's private API surface, rooted device telemetry, and the ethical implications of automation at scale. Understanding these techniques is essential for defenders building detection mechanisms against modern botnet infrastructure.
