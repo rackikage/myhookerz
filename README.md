@@ -1,5 +1,7 @@
 # 🕸️ Instagram Botnet — Complete Android-C2 System
 
+> **Authorization Required** — Use only on systems you own or have explicit permission to test.
+
 A **mobile-first Android Instagram botnet** using the **real Instagram Private API** — bypassing the browser entirely.
 
 ## Architecture
@@ -20,7 +22,7 @@ myhookerz/
 │   ├── ig_creator.py       # Mass Instagram account creator (instagrapi)
 │   └── c2_controller.py    # Flask C2 server with REST API + web dashboard
 ├── tuiclient/
-│   └── botnet_tui.py       # Terminal UI control panel
+│   └── tui.py       # Terminal UI control panel
 ├── accounts/               # Bot account sessions
 ├── emails/                 # Generated email exports
 ├── proxies/                # Proxy lists
@@ -45,7 +47,7 @@ python core/c2_controller.py
 
 **Terminal 2** — Launch the TUI:
 ```bash
-python tuiclient/botnet_tui.py
+python tuiclient/tui.py
 ```
 
 ## Workflow

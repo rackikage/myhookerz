@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-botnet_tui.py — Terminal UI for IG Botnet C2
+tui.py — Terminal UI for IG Botnet C2
 Controls everything: email gen, account creation, bot commands
 """
 import os
