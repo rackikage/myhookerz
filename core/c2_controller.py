@@ -20,6 +20,12 @@ from flask import Flask, request, jsonify, render_template_string, send_file
 from instagrapi import Client
 from instagrapi.exceptions import ClientError
 
+from core.bot_behavior import BehaviorEngine, BotScheduler
+from core.adb_bridge import ADBBridge, check_adb, list_devices
+from core.account_pipeline import AccountPipeline, get_pipeline_accounts, get_pipeline_stats
+from core.fingerprint import FingerprintManager
+from core.proxy_verifier import test_proxy, batch_verify, get_ip_info
+
 app = Flask(__name__)
 
 DB_PATH = "botnet.db"
@@ -76,6 +82,19 @@ def init_db():
 
 init_db()
 
+scheduler = BotScheduler()
+scheduler.start()
+
+adb_bridge = ADBBridge()
+pipeline = AccountPipeline(adb_bridge=adb_bridge)
+fingerprint = FingerprintManager()
+if check_adb():
+    adb_bridge.scan()
+    adb_bridge.start_monitor()
+    print(f"[ADB] Bridge active — {len(adb_bridge.phones)} phone(s) detected")
+else:
+    print("[ADB] ADB not found — phone proxy carrier disabled")
+
 def get_db():
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
@@ -103,6 +122,7 @@ def dashboard():
     total = conn.execute("SELECT COUNT(*) FROM bots").fetchone()[0]
     online = conn.execute("SELECT COUNT(*) FROM bots WHERE status='online'").fetchone()[0]
     pending = conn.execute("SELECT COUNT(*) FROM tasks WHERE status='pending'").fetchone()[0]
+    bots = conn.execute("SELECT * FROM bots ORDER BY id DESC LIMIT 20").fetchall()
     conn.close()
     
     return render_template_string("""
@@ -127,6 +147,9 @@ def dashboard():
             <a href="/">Dashboard</a> | 
             <a href="/bots">Bots</a> | 
             <a href="/tasks">Tasks</a> | 
+            <a href="/schedules">Schedules</a> |
+            <a href="/engage">Engage</a> |
+            <a href="/phones">📱 Phones</a> |
             <a href="/api/stats">API Stats</a>
         </div>
         <div class="stat">Total Bots <span>{{ total }}</span></div>
@@ -145,8 +168,7 @@ def dashboard():
             {% endfor %}
         </table>
     </body></html>
-    """, total=total, online=online, pending=pending, 
-       bots=conn.execute("SELECT * FROM bots ORDER BY id DESC LIMIT 20").fetchall())
+    """, total=total, online=online, pending=pending, bots=bots)
 
 @app.route('/bots')
 def bots_page():
@@ -211,6 +233,143 @@ def tasks_page():
     </body></html>
     """, tasks=tasks)
 
+@app.route('/phones')
+def phones_page():
+    stats = adb_bridge.get_stats()
+    return render_template_string("""
+    <!DOCTYPE html><html><head><title>ADB Phones</title><style>
+        body{font-family:monospace;background:#0a0a0a;color:#0f0;margin:20px}
+        table{width:100%;border-collapse:collapse}
+        th,td{text-align:left;padding:8px;border-bottom:1px solid #333}
+        .online{color:#0f0}.offline{color:#f44}
+        .card{display:inline-block;padding:15px;margin:10px;border:1px solid #0f0;border-radius:5px}
+        .card span{font-size:2em;display:block}
+        .btn{background:#111;color:#0f0;border:1px solid #0f0;padding:8px 16px;margin:5px;cursor:pointer;border-radius:3px}
+        .btn:hover{background:#0a1a0a}
+    </style></head><body>
+    <h1>📱 ADB Phone Proxy Carriers</h1>
+    <div class="card">Total <span>{{ stats.total_phones }}</span></div>
+    <div class="card">Online <span>{{ stats.online_phones }}</span></div>
+    <div class="card">Proxies <span>{{ stats.proxies_active }}</span></div>
+    <div>
+        <button class="btn" onclick="f('scan')">🔍 Scan Devices</button>
+        <button class="btn" onclick="f('provision_all')">🚀 Provision All</button>
+        <button class="btn" onclick="f('refresh')">🔄 Refresh Proxies</button>
+    </div>
+    <h2>Connected Phones</h2>
+    <table>
+        <tr><th>Serial</th><th>Model</th><th>Proxy</th><th>Battery</th><th>Operator</th><th>Status</th><th>Actions</th></tr>
+        {% for p in stats.phones %}
+        <tr>
+            <td>{{ p.serial }}</td>
+            <td>{{ p.model }}</td>
+            <td>{{ p.proxy_url or 'Not set' }}</td>
+            <td>{{ p.battery or '?' }}%</td>
+            <td>{{ p.operator or '?' }}</td>
+            <td class="{{ 'online' if p.online else 'offline' }}">{{ 'Online' if p.online else 'Offline' }}</td>
+            <td><button class="btn" onclick="prov('{{ p.serial }}')">Provision</button></td>
+        </tr>
+        {% endfor %}
+    </table>
+    {% if not stats.phones %}<p>No phones connected. Plug in USB debugging-enabled devices.</p>{% endif %}
+    <script>
+    function f(action){
+        var url = '/api/adb/' + action;
+        if(action=='refresh') url='/api/adb/refresh_proxies';
+        fetch(url,{method:'POST'}).then(r=>r.json()).then(d=>{alert(JSON.stringify(d,null,2));location.reload()})
+    }
+    function prov(s){
+        fetch('/api/adb/provision/'+s,{method:'POST'}).then(r=>r.json()).then(d=>{alert(JSON.stringify(d,null,2));location.reload()})
+    }
+    </script>
+    <a href="/">← Back</a>
+    </body></html>
+    """, stats=stats)
+
+@app.route('/schedules')
+def schedules_page():
+    scheds = scheduler.list_schedules()
+    return render_template_string("""
+    <!DOCTYPE html><html><head><title>Schedules</title><style>
+        body{font-family:monospace;background:#0a0a0a;color:#00ff00;margin:20px}
+        table{width:100%;border-collapse:collapse}
+        th,td{text-align:left;padding:8px;border-bottom:1px solid #333}
+        .active{color:#0f0}.paused{color:#ff0}
+    </style></head><body>
+    <h1>⏰ Bot Schedules</h1>
+    <table>
+        <tr><th>Bot</th><th>Next Run</th><th>Config</th></tr>
+        {% for uname, s in scheds.items() %}
+        <tr>
+            <td>{{ uname }}</td>
+            <td>{{ s.next_run }}</td>
+            <td>{{ s.config }}</td>
+        </tr>
+        {% endfor %}
+    </table>
+    {% if not scheds %}<p>No scheduled bots.</p>{% endif %}
+    <a href="/">← Back</a>
+    </body></html>
+    """, scheds=scheds)
+
+@app.route('/engage')
+def engage_page():
+    return render_template_string("""
+    <!DOCTYPE html><html><head><title>Engage</title><style>
+        body{font-family:monospace;background:#0a0a0a;color:#00ff00;margin:20px}
+        .card{display:inline-block;padding:20px;margin:10px;border:1px solid #0f0;border-radius:5px;cursor:pointer}
+        .card:hover{background:#0a1a0a}
+        form{margin:20px 0} input,button{background:#111;color:#0f0;border:1px solid #0f0;padding:8px;margin:5px}
+    </style></head><body>
+    <h1>🤖 Behavior Controls</h1>
+    <div class="card" onclick="fetch('/api/mass_engage',{method:'POST'}).then(r=>r.json()).then(alert)">
+    ▶️ Mass Engage<br><small>All bots: like, comment, follow-back, stories</small>
+    </div>
+    <div class="card" onclick="fetch('/api/mass_bio_rotate',{method:'POST'}).then(r=>r.json()).then(alert)">
+    🔄 Rotate Bios<br><small>All online bots get new bios</small>
+    </div>
+    <div class="card" onclick="fetch('/api/mass_set_pp',{method:'POST'}).then(r=>r.json()).then(alert)">
+    🖼️ Set Profile Pics<br><small>All online bots get avatar</small>
+    </div>
+    <div class="card" onclick="fetch('/api/schedule/list').then(r=>r.json()).then(d=>alert(JSON.stringify(d,null,2)))">
+    📋 View Schedules
+    </div>
+    <h2>Single Bot Actions</h2>
+    <form onsubmit="e(this,'engage')"><label>Bot: <input name="bot" required></label>
+    <button>Engage Session</button></form>
+    <form onsubmit="e(this,'like')"><label>Bot: <input name="bot" required></label>
+    <label>Target: <input name="target" required></label>
+    <button>Like Recent</button></form>
+    <form onsubmit="e(this,'follow_back')"><label>Bot: <input name="bot" required></label>
+    <button>Follow Back</button></form>
+    <form onsubmit="e(this,'rotate_bio')"><label>Bot: <input name="bot" required></label>
+    <button>Rotate Bio</button></form>
+    <form onsubmit="e(this,'set_pp')"><label>Bot: <input name="bot" required></label>
+    <button>Set Profile Pic</button></form>
+    <form onsubmit="e(this,'schedule')"><label>Bot: <input name="bot" required></label>
+    <label>Delay(min): <input name="delay" value="30"></label>
+    <button>Schedule Daily</button></form>
+    <script>
+    function e(f,action){
+        f.preventDefault();
+        var bot=f.bot.value;
+        var target=f.target?f.target.value:'';
+        var delay=f.delay?f.delay.value:'30';
+        var url,body={};
+        if(action=='engage'){url='/api/bot/'+bot+'/engage';body={};}
+        else if(action=='like'){url='/api/bot/'+bot+'/like_recent';body={target:target};}
+        else if(action=='follow_back'){url='/api/bot/'+bot+'/follow_back';body={};}
+        else if(action=='rotate_bio'){url='/api/bot/'+bot+'/rotate_bio';body={};}
+        else if(action=='set_pp'){url='/api/bot/'+bot+'/set_pp';body={};}
+        else if(action=='schedule'){url='/api/schedule/bot/'+bot;body={delay_minutes:parseInt(delay)};}
+        fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})
+        .then(r=>r.json()).then(alert).catch(e=>alert(e));
+    }
+    </script>
+    <a href="/">← Back</a>
+    </body></html>
+    """)
+
 @app.route('/api/stats')
 def api_stats():
     conn = get_db()
@@ -221,10 +380,19 @@ def api_stats():
     total_tasks = conn.execute("SELECT COUNT(*) FROM tasks").fetchone()[0]
     total_proxies = conn.execute("SELECT COUNT(*) FROM proxies").fetchone()[0]
     conn.close()
+    sched_count = len(scheduler.list_schedules())
+    adb = adb_bridge.get_stats()
+    pipe_stats = get_pipeline_stats()
     return jsonify({
         'total_bots': total, 'online_bots': online, 'busy_bots': busy,
         'pending_tasks': pending_tasks, 'total_tasks': total_tasks,
-        'total_proxies': total_proxies, 'status': 'running'
+        'total_proxies': total_proxies, 'scheduled_bots': sched_count,
+        'adb_phones': adb.get('total_phones', 0),
+        'adb_proxies': adb.get('proxies_active', 0),
+        'pipeline_total': pipe_stats.get('total', 0),
+        'pipeline_states': pipe_stats.get('by_state', {}),
+        'fingerprint_profiles': fingerprint.stats().get('total_profiles', 0),
+        'status': 'running'
     })
 
 @app.route('/api/bots')
@@ -424,6 +592,326 @@ def api_export():
     bots = [dict(r) for r in conn.execute("SELECT username, password, email, proxy FROM bots").fetchall()]
     conn.close()
     return jsonify(bots)
+
+# ── Humanized Behavior Endpoints ──────────────────────────────────
+
+@app.route('/api/bot/<username>/engage', methods=['POST'])
+def api_bot_engage(username):
+    """Run a full human-like engagement session on one bot."""
+    conn = get_db()
+    bot = conn.execute("SELECT * FROM bots WHERE username=?", (username,)).fetchone()
+    conn.close()
+    if not bot:
+        return jsonify({'error': 'not found'}), 404
+    config = request.json or {}
+    threading.Thread(
+        target=lambda: (
+            setattr(threading.current_thread(), 'result',
+                    BehaviorEngine.full_engagement_session(dict(bot), config))
+        ),
+        daemon=True,
+    ).start()
+    return jsonify({'status': 'dispatched', 'username': username})
+
+@app.route('/api/bot/<username>/like_recent', methods=['POST'])
+def api_like_recent(username):
+    conn = get_db()
+    bot = conn.execute("SELECT * FROM bots WHERE username=?", (username,)).fetchone()
+    conn.close()
+    if not bot:
+        return jsonify({'error': 'not found'}), 404
+    data = request.json or {}
+    target = data.get('target', '')
+    max_posts = data.get('max_posts', 4)
+    if not target:
+        return jsonify({'error': 'target required'}), 400
+    def _run():
+        client = BehaviorEngine.login_and_online(dict(bot))
+        liked = BehaviorEngine.like_recent_posts(client, target, max_posts)
+        update_bot_status(username, 'online')
+        return liked
+    threading.Thread(target=_run, daemon=True).start()
+    return jsonify({'status': 'running', 'target': target})
+
+@app.route('/api/bot/<username>/follow_back', methods=['POST'])
+def api_follow_back(username):
+    conn = get_db()
+    bot = conn.execute("SELECT * FROM bots WHERE username=?", (username,)).fetchone()
+    conn.close()
+    if not bot:
+        return jsonify({'error': 'not found'}), 404
+    def _run():
+        client = BehaviorEngine.login_and_online(dict(bot))
+        count = BehaviorEngine.auto_follow_backers(client)
+        update_bot_status(username, 'online')
+        return count
+    threading.Thread(target=_run, daemon=True).start()
+    return jsonify({'status': 'running'})
+
+@app.route('/api/bot/<username>/set_pp', methods=['POST'])
+def api_set_pp(username):
+    conn = get_db()
+    bot = conn.execute("SELECT * FROM bots WHERE username=?", (username,)).fetchone()
+    conn.close()
+    if not bot:
+        return jsonify({'error': 'not found'}), 404
+    data = request.json or {}
+    image = data.get('image', '')
+    if not image:
+        image = BehaviorEngine.generate_profile_pic_url()
+    def _run():
+        client = BehaviorEngine.login_and_online(dict(bot))
+        ok = BehaviorEngine.set_profile_pic(client, image)
+        update_bot_status(username, 'online')
+        return ok
+    threading.Thread(target=_run, daemon=True).start()
+    return jsonify({'status': 'running', 'image': image})
+
+@app.route('/api/bot/<username>/rotate_bio', methods=['POST'])
+def api_rotate_bio(username):
+    conn = get_db()
+    bot = conn.execute("SELECT * FROM bots WHERE username=?", (username,)).fetchone()
+    conn.close()
+    if not bot:
+        return jsonify({'error': 'not found'}), 404
+    def _run():
+        client = BehaviorEngine.login_and_online(dict(bot))
+        bio = BehaviorEngine.rotate_bio(client)
+        update_bot_status(username, 'online')
+        return bio
+    threading.Thread(target=_run, daemon=True).start()
+    return jsonify({'status': 'running'})
+
+@app.route('/api/bot/<username>/report', methods=['POST'])
+def api_bot_report(username):
+    data = request.json or {}
+    report = data.get('report', {})
+    conn = get_db()
+    conn.execute("UPDATE bots SET notes=? WHERE username=?",
+                 (json.dumps(report), username))
+    conn.commit()
+    conn.close()
+    return jsonify({'saved': True})
+
+@app.route('/api/bot/<username>/comment_on', methods=['POST'])
+def api_comment_on(username):
+    conn = get_db()
+    bot = conn.execute("SELECT * FROM bots WHERE username=?", (username,)).fetchone()
+    conn.close()
+    if not bot:
+        return jsonify({'error': 'not found'}), 404
+    data = request.json or {}
+    target = data.get('target', '')
+    max_posts = data.get('max_posts', 2)
+    if not target:
+        return jsonify({'error': 'target required'}), 400
+    def _run():
+        client = BehaviorEngine.login_and_online(dict(bot))
+        count = BehaviorEngine.comment_on_recent(client, target, max_posts)
+        update_bot_status(username, 'online')
+        return count
+    threading.Thread(target=_run, daemon=True).start()
+    return jsonify({'status': 'running', 'target': target})
+
+# ── Scheduler Endpoints ──────────────────────────────────────────
+
+@app.route('/api/schedule/bot/<username>', methods=['POST'])
+def api_schedule_bot(username):
+    data = request.json or {}
+    delay = data.get('delay_minutes', random.randint(10, 120))
+    scheduler.schedule_bot(username, config=data.get('config', {}), first_delay_minutes=delay)
+    return jsonify({'scheduled': True, 'username': username, 'delay_minutes': delay})
+
+@app.route('/api/schedule/bot/<username>', methods=['DELETE'])
+def api_unschedule_bot(username):
+    scheduler.unschedule_bot(username)
+    return jsonify({'unscheduled': True, 'username': username})
+
+@app.route('/api/schedule/list')
+def api_list_schedules():
+    return jsonify(scheduler.list_schedules())
+
+@app.route('/api/mass_engage', methods=['POST'])
+def api_mass_engage():
+    """Run engagement session on all online/idle bots."""
+    data = request.json or {}
+    config = data.get('config', {})
+    max_bots = data.get('max_bots', 20)
+    conn = get_db()
+    bots = conn.execute(
+        "SELECT * FROM bots WHERE status IN ('online','idle') LIMIT ?",
+        (max_bots,),
+    ).fetchall()
+    conn.close()
+    dispatched = []
+    for bot in bots:
+        threading.Thread(
+            target=lambda b=dict(bot): BehaviorEngine.full_engagement_session(b, config),
+            daemon=True,
+        ).start()
+        dispatched.append(bot['username'])
+    return jsonify({'mass_engage': True, 'bots_used': len(dispatched), 'bots': dispatched})
+
+@app.route('/api/mass_bio_rotate', methods=['POST'])
+def api_mass_bio_rotate():
+    conn = get_db()
+    bots = conn.execute("SELECT * FROM bots WHERE status IN ('online','idle')").fetchall()
+    conn.close()
+    for bot in bots:
+        threading.Thread(target=lambda b=dict(bot): (
+            setattr(threading.Thread, '_bio',
+                    BehaviorEngine.rotate_bio(BehaviorEngine.login_and_online(b)))
+        ), daemon=True).start()
+    return jsonify({'mass_bio': True, 'bots': len(bots)})
+
+@app.route('/api/mass_set_pp', methods=['POST'])
+def api_mass_set_pp():
+    conn = get_db()
+    bots = conn.execute("SELECT * FROM bots WHERE status IN ('online','idle')").fetchall()
+    conn.close()
+    for bot in bots:
+        threading.Thread(target=lambda b=dict(bot): (
+            BehaviorEngine.set_profile_pic(
+                BehaviorEngine.login_and_online(b),
+                BehaviorEngine.generate_profile_pic_url(),
+            )
+        ), daemon=True).start()
+    return jsonify({'mass_pp': True, 'bots': len(bots)})
+
+# ── ADB Phone Proxy Bridge Endpoints ──────────────────────────
+
+@app.route('/api/adb/scan', methods=['POST'])
+def api_adb_scan():
+    phones = adb_bridge.scan()
+    return jsonify({'phones': phones, 'count': len(phones)})
+
+@app.route('/api/adb/phones')
+def api_adb_phones():
+    return jsonify(adb_bridge.get_stats())
+
+@app.route('/api/adb/provision/<serial>', methods=['POST'])
+def api_adb_provision(serial):
+    ok = adb_bridge.provision_phone(serial)
+    return jsonify({'serial': serial, 'success': ok})
+
+@app.route('/api/adb/provision_all', methods=['POST'])
+def api_adb_provision_all():
+    results = adb_bridge.provision_all()
+    return jsonify({'results': results})
+
+@app.route('/api/adb/refresh_proxies', methods=['POST'])
+def api_adb_refresh_proxies():
+    proxies = adb_bridge.get_proxy_list()
+    # Merge into proxy DB
+    conn = get_db()
+    for p in proxies:
+        try:
+            conn.execute(
+                "INSERT OR IGNORE INTO proxies (proxy_url, type) VALUES (?,?)",
+                (p, 'adb_phone'),
+            )
+        except:
+            pass
+    conn.commit()
+    conn.close()
+    return jsonify({'proxies_added': len(proxies), 'proxies': proxies})
+
+@app.route('/api/adb/status')
+def api_adb_status():
+    return jsonify({
+        'adb_available': check_adb(),
+        'devices_detected': len(list_devices()),
+        **adb_bridge.get_stats(),
+    })
+
+# ── Pipeline Endpoints ───────────────────────────────────────
+
+@app.route('/api/pipeline/create', methods=['POST'])
+def api_pipeline_create():
+    data = request.json or {}
+    count = data.get('count', 1)
+    config = {
+        'use_adb': data.get('use_adb', True),
+        'phone': data.get('phone', ''),
+        'proxies': data.get('proxies', None),
+    }
+    if count == 1:
+        result = pipeline.create_account(config)
+        return jsonify(result)
+    else:
+        threads = data.get('threads', min(count, 5))
+        results = pipeline.batch_create(count, config, threads)
+        return jsonify({'created': len(results), 'accounts': results})
+
+@app.route('/api/pipeline/accounts')
+def api_pipeline_accounts():
+    state = request.args.get('state')
+    limit = int(request.args.get('limit', 100))
+    accounts = get_pipeline_accounts(state, limit)
+    return jsonify(accounts)
+
+@app.route('/api/pipeline/stats')
+def api_pipeline_stats():
+    return jsonify(get_pipeline_stats())
+
+@app.route('/api/pipeline/age/<username>', methods=['POST'])
+def api_pipeline_age(username):
+    data = request.json or {}
+    days = data.get('days', 3)
+    threading.Thread(target=pipeline.age_account, args=(username, days), daemon=True).start()
+    return jsonify({'status': 'aging', 'username': username})
+
+@app.route('/api/pipeline/health/<username>')
+def api_pipeline_health(username):
+    result = pipeline.health_check(username)
+    return jsonify(result)
+
+@app.route('/api/pipeline/batch_health', methods=['POST'])
+def api_pipeline_batch_health():
+    results = pipeline.batch_health_check()
+    return jsonify({'checked': len(results), 'results': results})
+
+@app.route('/api/pipeline/batch_age', methods=['POST'])
+def api_pipeline_batch_age():
+    data = request.json or {}
+    count = data.get('count', 5)
+    threading.Thread(target=pipeline.batch_age, args=(count,), daemon=True).start()
+    return jsonify({'aging': count})
+
+# ── Fingerprint Endpoints ────────────────────────────────────
+
+@app.route('/api/fingerprints')
+def api_fingerprints():
+    return jsonify(fingerprint.stats())
+
+# ── Proxy Verification Endpoints ─────────────────────────────
+
+@app.route('/api/proxy/verify', methods=['POST'])
+def api_proxy_verify():
+    data = request.json or {}
+    proxy = data.get('proxy', '')
+    if not proxy:
+        return jsonify({'error': 'proxy required'}), 400
+    result = test_proxy(proxy)
+    return jsonify(result)
+
+@app.route('/api/proxy/batch_verify', methods=['POST'])
+def api_proxy_batch_verify():
+    data = request.json or {}
+    proxies = data.get('proxies', [])
+    if not proxies:
+        return jsonify({'error': 'proxies required'}), 400
+    results = batch_verify(proxies)
+    working = [r for r in results if r.get('working')]
+    return jsonify({'total': len(proxies), 'working': len(working), 'results': results})
+
+@app.route('/api/ip')
+def api_my_ip():
+    proxy = request.args.get('proxy', '')
+    info = get_ip_info(proxy if proxy else None)
+    return jsonify(info or {'error': 'could not determine IP'})
+
+# ── Legacy ───────────────────────────────────────────────────────
 
 def keep_bots_online():
     while True:

@@ -52,6 +52,36 @@ def print_menu():
     [A]  SMS Gateway Status
     [B]  Dual-SIM Rotator Config
     [C]  Create Account w/ SMS Verify
+    -------------------------------------------
+    --- BEHAVIOR ENGINE ---
+    [D]  Full Engagement Session
+    [E]  Like Recent Posts (humanized)
+    [F]  Auto Follow-Back
+    [G]  Rotate Bio
+    [H]  Set Profile Picture
+    [I]  Schedule Bot Daily
+    [J]  Mass Engage All Bots
+    [K]  Mass Bio Rotate
+    [L]  Mass Set Profile Pics
+    [M]  View Schedules
+    -------------------------------------------
+    --- ADB PHONE PROXY CARRIERS ---
+    [N]  Scan ADB Devices
+    [O]  Phone Status Dashboard
+    [P]  Provision Phone
+    [Q]  Provision All Phones
+    [R]  Refresh Proxy Pool from Phones
+    -------------------------------------------
+    --- PIPELINE & HEALTH ---
+    [S]  Pipeline Status Dashboard
+    [T]  Create Account (Full Pipeline)
+    [U]  Batch Create Accounts
+    [V]  Age Account
+    [W]  Batch Age Accounts
+    [X]  Health Check Account
+    [Y]  Batch Health Check
+    [Z]  Verify Proxy
+    -------------------------------------------
     [0]  Exit
     -------------------------------------------
     """)
@@ -80,13 +110,21 @@ def mass_ig_creator():
     clear()
     print("=== MASS INSTAGRAM CREATOR ===\n")
     count = int(input("How many accounts to create? "))
-    proxy_file = input("Proxy list file (or Enter to skip): ").strip()
+    use_adb = input("Use ADB phone proxies? (y/N): ").strip().lower() == 'y'
+    proxy_file = ""
     proxies = None
-    if proxy_file and os.path.exists(proxy_file):
-        with open(proxy_file) as f:
-            proxies = [line.strip() for line in f if line.strip()]
-        print(f"[*] Loaded {len(proxies)} proxies")
+    if not use_adb:
+        proxy_file = input("Proxy list file (or Enter to skip): ").strip()
+        if proxy_file and os.path.exists(proxy_file):
+            with open(proxy_file) as f:
+                proxies = [line.strip() for line in f if line.strip()]
+            print(f"[*] Loaded {len(proxies)} proxies")
+    else:
+        print("[*] Will auto-detect ADB phone proxies")
     threads = int(input("Threads [3]: ") or "3")
+    use_sms = input("Use SMS verification? (y/N): ").strip().lower() == 'y'
+    if not use_adb:
+        use_adb = False
     print(f"\n[*] Creating {count} Instagram accounts...")
     script = f"""
 import sys, json, time
@@ -94,7 +132,7 @@ sys.path.insert(0, '{Path.cwd()}')
 from core.ig_creator import MassCreator
 from core.email_factory import EmailFactory
 
-creator = MassCreator({count}, {json.dumps(proxies)}, {threads})
+creator = MassCreator({count}, {json.dumps(proxies)}, {threads}, use_adb_proxies={'true' if use_adb else 'false'})
 accounts = creator.run()
 
 with open('accounts/batch_{int(time.time())}.json', 'w') as f:
@@ -396,6 +434,315 @@ def dual_sim_config():
         print("[!] Both numbers required")
     input("\nPress Enter to continue...")
 
+# ── Behavior Engine Handlers ──────────────────────────────────
+
+def behavior_engage():
+    clear()
+    print("=== FULL ENGAGEMENT SESSION ===\n")
+    username = input("Bot username: ").strip()
+    try:
+        r = requests.post(f"{C2_URL}/api/bot/{username}/engage", json={})
+        print(f"\n[Response] {json.dumps(r.json(), indent=2)}")
+    except Exception as e:
+        print(f"[!] Error: {e}")
+    input("\nPress Enter to continue...")
+
+def behavior_like_recent():
+    clear()
+    print("=== LIKE RECENT POSTS (HUMANIZED) ===\n")
+    username = input("Bot username: ").strip()
+    target = input("Target username: ").strip()
+    max_p = input("Max posts to like [4]: ").strip() or "4"
+    try:
+        r = requests.post(f"{C2_URL}/api/bot/{username}/like_recent", json={'target': target, 'max_posts': int(max_p)})
+        print(f"\n[Response] {json.dumps(r.json(), indent=2)}")
+    except Exception as e:
+        print(f"[!] Error: {e}")
+    input("\nPress Enter to continue...")
+
+def behavior_follow_back():
+    clear()
+    print("=== AUTO FOLLOW-BACK ===\n")
+    username = input("Bot username: ").strip()
+    try:
+        r = requests.post(f"{C2_URL}/api/bot/{username}/follow_back", json={})
+        print(f"\n[Response] {json.dumps(r.json(), indent=2)}")
+    except Exception as e:
+        print(f"[!] Error: {e}")
+    input("\nPress Enter to continue...")
+
+def behavior_rotate_bio():
+    clear()
+    print("=== ROTATE BIO ===\n")
+    username = input("Bot username: ").strip()
+    try:
+        r = requests.post(f"{C2_URL}/api/bot/{username}/rotate_bio", json={})
+        print(f"\n[Response] {json.dumps(r.json(), indent=2)}")
+    except Exception as e:
+        print(f"[!] Error: {e}")
+    input("\nPress Enter to continue...")
+
+def behavior_set_pp():
+    clear()
+    print("=== SET PROFILE PICTURE ===\n")
+    username = input("Bot username: ").strip()
+    image = input("Image URL (or Enter for random generated): ").strip()
+    try:
+        r = requests.post(f"{C2_URL}/api/bot/{username}/set_pp", json={'image': image})
+        print(f"\n[Response] {json.dumps(r.json(), indent=2)}")
+    except Exception as e:
+        print(f"[!] Error: {e}")
+    input("\nPress Enter to continue...")
+
+def behavior_schedule():
+    clear()
+    print("=== SCHEDULE BOT DAILY ===\n")
+    username = input("Bot username: ").strip()
+    delay = input("First run delay in minutes [30]: ").strip() or "30"
+    try:
+        r = requests.post(f"{C2_URL}/api/schedule/bot/{username}", json={'delay_minutes': int(delay)})
+        print(f"\n[Response] {json.dumps(r.json(), indent=2)}")
+    except Exception as e:
+        print(f"[!] Error: {e}")
+    input("\nPress Enter to continue...")
+
+def behavior_mass_engage():
+    clear()
+    print("=== MASS ENGAGE ALL BOTS ===\n")
+    max_b = input("Max bots to engage [20]: ").strip() or "20"
+    try:
+        r = requests.post(f"{C2_URL}/api/mass_engage", json={'max_bots': int(max_b)})
+        print(f"\n[Response] {json.dumps(r.json(), indent=2)}")
+    except Exception as e:
+        print(f"[!] Error: {e}")
+    input("\nPress Enter to continue...")
+
+def behavior_mass_bio():
+    clear()
+    print("=== MASS BIO ROTATE ===\n")
+    try:
+        r = requests.post(f"{C2_URL}/api/mass_bio_rotate", json={})
+        print(f"\n[Response] {json.dumps(r.json(), indent=2)}")
+    except Exception as e:
+        print(f"[!] Error: {e}")
+    input("\nPress Enter to continue...")
+
+def behavior_mass_pp():
+    clear()
+    print("=== MASS SET PROFILE PICS ===\n")
+    try:
+        r = requests.post(f"{C2_URL}/api/mass_set_pp", json={})
+        print(f"\n[Response] {json.dumps(r.json(), indent=2)}")
+    except Exception as e:
+        print(f"[!] Error: {e}")
+    input("\nPress Enter to continue...")
+
+# ── ADB Phone Proxy Bridge Handlers ──────────────────────────
+
+def adb_scan():
+    clear()
+    print("=== SCAN ADB DEVICES ===\n")
+    try:
+        r = requests.post(f"{C2_URL}/api/adb/scan", json={})
+        data = r.json()
+        print(f"  Phones found: {data.get('count', 0)}")
+        for p in data.get('phones', []):
+            status = '✓' if p.get('online') else '✗'
+            print(f"  [{status}] {p['serial']:20} {p.get('model','?'):20} bat:{p.get('battery','?')}%")
+    except Exception as e:
+        print(f"[!] Error: {e}")
+    input("\nPress Enter to continue...")
+
+def adb_phones():
+    clear()
+    print("=== ADB PHONE STATUS ===\n")
+    try:
+        r = requests.get(f"{C2_URL}/api/adb/phones")
+        stats = r.json()
+        print(f"  Total phones: {stats.get('total_phones', 0)}")
+        print(f"  Online:       {stats.get('online_phones', 0)}")
+        print(f"  Active proxies: {stats.get('proxies_active', 0)}")
+        print()
+        for p in stats.get('phones', []):
+            status = 'ONLINE' if p.get('online') else 'OFFLINE'
+            print(f"  {p['serial']:<20} {status:<8} {p.get('model','?'):<20} "
+                  f"bat:{p.get('battery','?'):>3}%  {p.get('proxy_url','no proxy')}")
+            if p.get('operator'):
+                print(f"  {'':>20} carrier: {p['operator']}")
+    except Exception as e:
+        print(f"[!] Error: {e}")
+    input("\nPress Enter to continue...")
+
+def adb_provision():
+    clear()
+    print("=== PROVISION ADB PHONE ===\n")
+    serial = input("Phone serial: ").strip()
+    if not serial:
+        print("[!] Serial required")
+        input("\nPress Enter...")
+        return
+    try:
+        r = requests.post(f"{C2_URL}/api/adb/provision/{serial}", json={})
+        print(f"\n[Response] {json.dumps(r.json(), indent=2)}")
+    except Exception as e:
+        print(f"[!] Error: {e}")
+    input("\nPress Enter to continue...")
+
+def adb_provision_all():
+    clear()
+    print("=== PROVISION ALL PHONES ===\n")
+    try:
+        r = requests.post(f"{C2_URL}/api/adb/provision_all", json={})
+        print(f"\n[Response] {json.dumps(r.json(), indent=2)}")
+    except Exception as e:
+        print(f"[!] Error: {e}")
+    input("\nPress Enter to continue...")
+
+# ── Pipeline & Health Handlers ───────────────────────────────
+
+def pipeline_status():
+    clear()
+    print("=== PIPELINE STATUS ===\n")
+    try:
+        r = requests.get(f"{C2_URL}/api/pipeline/stats")
+        stats = r.json()
+        print(f"  Total accounts in pipeline: {stats.get('total', 0)}")
+        print()
+        print(f"  {'State':<20} {'Count':>6}")
+        print(f"  {'-----':<20} {'-----':>6}")
+        for state, count in sorted(stats.get('by_state', {}).items()):
+            print(f"  {state:<20} {count:>6}")
+    except Exception as e:
+        print(f"[!] Error: {e}")
+    input("\nPress Enter to continue...")
+
+def pipeline_create():
+    clear()
+    print("=== CREATE ACCOUNT (FULL PIPELINE) ===\n")
+    use_adb = input("Use ADB phone proxies? (Y/n): ").strip().lower() != 'n'
+    phone = input("Phone number for SMS (or Enter to skip): ").strip()
+    try:
+        body = {'count': 1, 'use_adb': use_adb}
+        if phone:
+            body['phone'] = phone
+        r = requests.post(f"{C2_URL}/api/pipeline/create", json=body)
+        print(f"\n[Response] {json.dumps(r.json(), indent=2, default=str)}")
+    except Exception as e:
+        print(f"[!] Error: {e}")
+    input("\nPress Enter to continue...")
+
+def pipeline_batch_create():
+    clear()
+    print("=== BATCH CREATE ACCOUNTS ===\n")
+    count = int(input("Number of accounts: "))
+    threads = int(input("Threads (3): ") or "3")
+    use_adb = input("Use ADB phone proxies? (Y/n): ").strip().lower() != 'n'
+    try:
+        r = requests.post(f"{C2_URL}/api/pipeline/create", json={
+            'count': count, 'threads': threads, 'use_adb': use_adb,
+        })
+        print(f"\n[Response] {json.dumps(r.json(), indent=2, default=str)[:2000]}")
+    except Exception as e:
+        print(f"[!] Error: {e}")
+    input("\nPress Enter to continue...")
+
+def pipeline_age():
+    clear()
+    print("=== AGE ACCOUNT ===\n")
+    username = input("Username: ").strip()
+    days = int(input("Aging days (3): ") or "3")
+    try:
+        r = requests.post(f"{C2_URL}/api/pipeline/age/{username}", json={'days': days})
+        print(f"\n[Response] {json.dumps(r.json(), indent=2)}")
+        print("[*] Aging running in background. Check pipeline status for state changes.")
+    except Exception as e:
+        print(f"[!] Error: {e}")
+    input("\nPress Enter to continue...")
+
+def pipeline_batch_age():
+    clear()
+    print("=== BATCH AGE ACCOUNTS ===\n")
+    count = int(input("Number of accounts to age (5): ") or "5")
+    try:
+        r = requests.post(f"{C2_URL}/api/pipeline/batch_age", json={'count': count})
+        print(f"\n[Response] {json.dumps(r.json(), indent=2)}")
+    except Exception as e:
+        print(f"[!] Error: {e}")
+    input("\nPress Enter to continue...")
+
+def pipeline_health():
+    clear()
+    print("=== HEALTH CHECK ACCOUNT ===\n")
+    username = input("Username: ").strip()
+    try:
+        r = requests.get(f"{C2_URL}/api/pipeline/health/{username}")
+        print(f"\n[Response] {json.dumps(r.json(), indent=2)}")
+    except Exception as e:
+        print(f"[!] Error: {e}")
+    input("\nPress Enter to continue...")
+
+def pipeline_batch_health():
+    clear()
+    print("=== BATCH HEALTH CHECK ===\n")
+    try:
+        r = requests.post(f"{C2_URL}/api/pipeline/batch_health", json={})
+        data = r.json()
+        print(f"  Checked: {data.get('checked', 0)} accounts")
+        for res in data.get('results', []):
+            status = '✓' if res.get('status') == 'alive' else '✗'
+            print(f"  [{status}] {res.get('username','?'):<20} {res.get('status','?'):<8} "
+                  f"followers:{res.get('follower_count',0)} posts:{res.get('media_count',0)}")
+    except Exception as e:
+        print(f"[!] Error: {e}")
+    input("\nPress Enter to continue...")
+
+def verify_proxy():
+    clear()
+    print("=== VERIFY PROXY ===\n")
+    proxy = input("Proxy URL (http://...): ").strip()
+    if proxy:
+        try:
+            r = requests.post(f"{C2_URL}/api/proxy/verify", json={'proxy': proxy})
+            print(f"\n[Result] {json.dumps(r.json(), indent=2)}")
+        except Exception as e:
+            print(f"[!] Error: {e}")
+    else:
+        # Check own IP
+        try:
+            r = requests.get(f"{C2_URL}/api/ip")
+            print(f"\n[Current IP] {json.dumps(r.json(), indent=2)}")
+        except Exception as e:
+            print(f"[!] Error: {e}")
+    input("\nPress Enter to continue...")
+
+def adb_refresh():
+    clear()
+    print("=== REFRESH PROXY POOL FROM PHONES ===\n")
+    try:
+        r = requests.post(f"{C2_URL}/api/adb/refresh_proxies", json={})
+        data = r.json()
+        print(f"  Proxies added: {data.get('proxies_added', 0)}")
+        for p in data.get('proxies', []):
+            print(f"  ✓ {p}")
+    except Exception as e:
+        print(f"[!] Error: {e}")
+    input("\nPress Enter to continue...")
+
+def behavior_view_schedules():
+    clear()
+    print("=== SCHEDULED BOTS ===\n")
+    try:
+        r = requests.get(f"{C2_URL}/api/schedule/list", timeout=5)
+        scheds = r.json()
+        if scheds:
+            for uname, s in scheds.items():
+                print(f"  {uname:<20} next: {s.get('next_run','?')}")
+        else:
+            print("  No scheduled bots")
+    except Exception as e:
+        print(f"[!] Error: {e}")
+    input("\nPress Enter to continue...")
+
 def create_with_sms():
     clear()
     print("=== CREATE ACCOUNTS WITH SMS VERIFICATION ===\n")
@@ -404,7 +751,12 @@ def create_with_sms():
     print(f"Root SMS DB: {'Available' if os.path.exists(sms_db) else 'Not available'}")
     print()
     count = int(input("Number of accounts to create? "))
-    proxy_file = input("Proxy file (or Enter to skip): ").strip()
+    use_adb = input("Use ADB phone proxies? (y/N): ").strip().lower() == 'y'
+    proxy_file = ""
+    if not use_adb:
+        proxy_file = input("Proxy file (or Enter to skip): ").strip()
+    else:
+        print("[*] Will auto-detect ADB phone proxies")
     phones = []
     if os.path.exists('proxies/sim_config.json'):
         with open('proxies/sim_config.json') as f:
@@ -440,7 +792,8 @@ creator = MassCreator(
     proxies={json.dumps(proxies)},
     threads={threads},
     phone_numbers={json.dumps(phones)},
-    use_sms=True
+    use_sms=True,
+    use_adb_proxies={'true' if use_adb else 'false'}
 )
 accounts = creator.run()
 timestamp = int(time.time())
@@ -472,7 +825,10 @@ def main():
         banner()
         stats = check_c2()
         if stats:
-            print(f"  C2: Online | Bots: {stats['online_bots']}/{stats['total_bots']} online | Tasks: {stats['pending_tasks']} pending")
+            adb_str = f" | 📱Phones: {stats.get('adb_phones',0)}" if stats.get('adb_phones', 0) > 0 else ""
+            pipe_str = f" | Pipeline: {stats.get('pipeline_total', 0)}" if stats.get('pipeline_total', 0) > 0 else ""
+            fp_str = f" | FP: {stats.get('fingerprint_profiles', 0)}" if stats.get('fingerprint_profiles', 0) > 0 else ""
+            print(f"  C2: Online | Bots: {stats['online_bots']}/{stats['total_bots']} online | Tasks: {stats['pending_tasks']} pending{adb_str}{pipe_str}{fp_str}")
         else:
             print("  C2: OFFLINE (start with option 7)")
         print_menu()
@@ -494,6 +850,29 @@ def main():
         elif choice_lower == 'a': sms_gateway_status()
         elif choice_lower == 'b': dual_sim_config()
         elif choice_lower == 'c': create_with_sms()
+        elif choice_lower == 'd': behavior_engage()
+        elif choice_lower == 'e': behavior_like_recent()
+        elif choice_lower == 'f': behavior_follow_back()
+        elif choice_lower == 'g': behavior_rotate_bio()
+        elif choice_lower == 'h': behavior_set_pp()
+        elif choice_lower == 'i': behavior_schedule()
+        elif choice_lower == 'j': behavior_mass_engage()
+        elif choice_lower == 'k': behavior_mass_bio()
+        elif choice_lower == 'l': behavior_mass_pp()
+        elif choice_lower == 'm': behavior_view_schedules()
+        elif choice_lower == 'n': adb_scan()
+        elif choice_lower == 'o': adb_phones()
+        elif choice_lower == 'p': adb_provision()
+        elif choice_lower == 'q': adb_provision_all()
+        elif choice_lower == 'r': adb_refresh()
+        elif choice_lower == 's': pipeline_status()
+        elif choice_lower == 't': pipeline_create()
+        elif choice_lower == 'u': pipeline_batch_create()
+        elif choice_lower == 'v': pipeline_age()
+        elif choice_lower == 'w': pipeline_batch_age()
+        elif choice_lower == 'x': pipeline_health()
+        elif choice_lower == 'y': pipeline_batch_health()
+        elif choice_lower == 'z': verify_proxy()
         elif choice == '0':
             print("\n  Goodbye.")
             break
